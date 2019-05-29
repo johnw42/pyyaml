@@ -85,6 +85,7 @@ class Parser:
         self.states = []
         self.marks = []
         self.state = self.parse_stream_start
+        self.pending_comments = None
 
     def dispose(self):
         # Reset the state attributes (to clear self-references)
@@ -128,8 +129,7 @@ class Parser:
 
         # Parse the stream start.
         token = self.get_token()
-        event = StreamStartEvent(token.start_mark, token.end_mark,
-                encoding=token.encoding)
+        event = self.make_event(StreamStartEvent, encoding=token.encoding, token=token)
 
         # Prepare the next state.
         self.state = self.parse_implicit_document_start
@@ -143,9 +143,8 @@ class Parser:
                 StreamEndToken):
             self.tag_handles = self.DEFAULT_TAGS
             token = self.peek_token()
-            start_mark = end_mark = token.start_mark
-            event = DocumentStartEvent(start_mark, end_mark,
-                    explicit=False)
+            event = self.make_event(
+                DocumentStartEvent, explicit=False, token=token)
 
             # Prepare the next state.
             self.states.append(self.parse_document_end)
@@ -174,14 +173,13 @@ class Parser:
                         self.peek_token().start_mark)
             token = self.get_token()
             end_mark = token.end_mark
-            event = DocumentStartEvent(start_mark, end_mark,
-                    explicit=True, version=version, tags=tags)
+            event = self.make_event(DocumentStartEvent, explicit=True, version=version, tags=tags, marks=(start_mark, end_mark))
             self.states.append(self.parse_document_end)
             self.state = self.parse_document_content
         else:
             # Parse the end of the stream.
             token = self.get_token()
-            event = StreamEndEvent(token.start_mark, token.end_mark)
+            event = self.make_event(StreamEndEvent, token=token)
             assert not self.states
             assert not self.marks
             self.state = None
@@ -197,8 +195,8 @@ class Parser:
             token = self.get_token()
             end_mark = token.end_mark
             explicit = True
-        event = DocumentEndEvent(start_mark, end_mark,
-                explicit=explicit)
+        event = self.make_event(
+            DocumentEndEvent, explicit=explicit, marks=(start_mark, end_mark))
 
         # Prepare the next state.
         self.state = self.parse_document_start
@@ -273,7 +271,7 @@ class Parser:
     def parse_node(self, block=False, indentless_sequence=False):
         if self.check_token(AliasToken):
             token = self.get_token()
-            event = AliasEvent(token.value, token.start_mark, token.end_mark)
+            event = self.make_event(AliasEvent, token.value, token=token)
             self.state = self.states.pop()
         else:
             anchor = None
@@ -318,8 +316,9 @@ class Parser:
             implicit = (tag is None or tag == '!')
             if indentless_sequence and self.check_token(BlockEntryToken):
                 end_mark = self.peek_token().end_mark
-                event = SequenceStartEvent(anchor, tag, implicit,
-                        start_mark, end_mark)
+                event = self.make_event(
+                    SequenceStartEvent, anchor, tag, implicit,
+                    marks=(start_mark, end_mark))
                 self.state = self.parse_indentless_sequence_entry
             else:
                 if self.check_token(ScalarToken):
@@ -331,34 +330,40 @@ class Parser:
                         implicit = (False, True)
                     else:
                         implicit = (False, False)
-                    event = ScalarEvent(anchor, tag, implicit, token.value,
-                            start_mark, end_mark, style=token.style)
+                    event = self.make_event(
+                        ScalarEvent, anchor, tag, implicit, token.value,
+                        marks=(start_mark, end_mark), style=token.style)
                     self.state = self.states.pop()
                 elif self.check_token(FlowSequenceStartToken):
                     end_mark = self.peek_token().end_mark
-                    event = SequenceStartEvent(anchor, tag, implicit,
-                            start_mark, end_mark, flow_style=True)
+                    event = self.make_event(
+                        SequenceStartEvent, anchor, tag, implicit,
+                        marks=(start_mark, end_mark), flow_style=True)
                     self.state = self.parse_flow_sequence_first_entry
                 elif self.check_token(FlowMappingStartToken):
                     end_mark = self.peek_token().end_mark
-                    event = MappingStartEvent(anchor, tag, implicit,
-                            start_mark, end_mark, flow_style=True)
+                    event = self.make_event(
+                        MappingStartEvent, anchor, tag, implicit,
+                        marks=(start_mark, end_mark), flow_style=True)
                     self.state = self.parse_flow_mapping_first_key
                 elif block and self.check_token(BlockSequenceStartToken):
                     end_mark = self.peek_token().start_mark
-                    event = SequenceStartEvent(anchor, tag, implicit,
-                            start_mark, end_mark, flow_style=False)
+                    event = self.make_event(
+                        SequenceStartEvent, anchor, tag, implicit,
+                        marks=(start_mark, end_mark), flow_style=False)
                     self.state = self.parse_block_sequence_first_entry
                 elif block and self.check_token(BlockMappingStartToken):
                     end_mark = self.peek_token().start_mark
-                    event = MappingStartEvent(anchor, tag, implicit,
-                            start_mark, end_mark, flow_style=False)
+                    event = self.make_event(
+                        MappingStartEvent, anchor, tag, implicit,
+                        marks=(start_mark, end_mark), flow_style=False)
                     self.state = self.parse_block_mapping_first_key
                 elif anchor is not None or tag is not None:
                     # Empty scalars are allowed even if a tag or an anchor is
                     # specified.
-                    event = ScalarEvent(anchor, tag, (implicit, False), '',
-                            start_mark, end_mark)
+                    event = self.make_event(
+                        ScalarEvent, anchor, tag, (implicit, False), '',
+                        marks=(start_mark, end_mark))
                     self.state = self.states.pop()
                 else:
                     if block:
@@ -392,7 +397,7 @@ class Parser:
             raise ParserError("while parsing a block collection", self.marks[-1],
                     "expected <block end>, but found %r" % token.id, token.start_mark)
         token = self.get_token()
-        event = SequenceEndEvent(token.start_mark, token.end_mark)
+        event = self.make_event(SequenceEndEvent, token=token)
         self.state = self.states.pop()
         self.marks.pop()
         return event
@@ -410,7 +415,7 @@ class Parser:
                 self.state = self.parse_indentless_sequence_entry
                 return self.process_empty_scalar(token.end_mark)
         token = self.peek_token()
-        event = SequenceEndEvent(token.start_mark, token.start_mark)
+        event = self.make_event(SequenceEndEvent, token=token)
         self.state = self.states.pop()
         return event
 
@@ -438,7 +443,7 @@ class Parser:
             raise ParserError("while parsing a block mapping", self.marks[-1],
                     "expected <block end>, but found %r" % token.id, token.start_mark)
         token = self.get_token()
-        event = MappingEndEvent(token.start_mark, token.end_mark)
+        event = self.make_event(MappingEndEvent, token=token)
         self.state = self.states.pop()
         self.marks.pop()
         return event
@@ -485,16 +490,16 @@ class Parser:
             
             if self.check_token(KeyToken):
                 token = self.peek_token()
-                event = MappingStartEvent(None, None, True,
-                        token.start_mark, token.end_mark,
-                        flow_style=True)
+                event = self.make_event(
+                    MappingStartEvent, None, None, True,
+                    token=token, flow_style=True)
                 self.state = self.parse_flow_sequence_entry_mapping_key
                 return event
             elif not self.check_token(FlowSequenceEndToken):
                 self.states.append(self.parse_flow_sequence_entry)
                 return self.parse_flow_node()
         token = self.get_token()
-        event = SequenceEndEvent(token.start_mark, token.end_mark)
+        event = self.make_event(SequenceEndEvent, token=token)
         self.state = self.states.pop()
         self.marks.pop()
         return event
@@ -526,7 +531,7 @@ class Parser:
     def parse_flow_sequence_entry_mapping_end(self):
         self.state = self.parse_flow_sequence_entry
         token = self.peek_token()
-        return MappingEndEvent(token.start_mark, token.start_mark)
+        return self.make_event(MappingEndEvent, token=token)
 
     # flow_mapping  ::= FLOW-MAPPING-START
     #                   (flow_mapping_entry FLOW-ENTRY)*
@@ -561,7 +566,7 @@ class Parser:
                 self.states.append(self.parse_flow_mapping_empty_value)
                 return self.parse_flow_node()
         token = self.get_token()
-        event = MappingEndEvent(token.start_mark, token.end_mark)
+        event = self.make_event(MappingEndEvent, token=token)
         self.state = self.states.pop()
         self.marks.pop()
         return event
@@ -585,5 +590,19 @@ class Parser:
         return self.process_empty_scalar(self.peek_token().start_mark)
 
     def process_empty_scalar(self, mark):
-        return ScalarEvent(None, None, (True, False), '', mark, mark)
+        return self.make_event(ScalarEvent, None, None, (True, False), '', start_mark=mark)
 
+    def make_event(self, event_class, *args, token=None, marks=None, start_mark=None, end_mark=None, **kwargs):
+        if marks:
+            assert not start_mark and not end_mark
+            start_mark, end_mark = marks
+        if token:
+            assert not start_mark and not end_mark
+            start_mark = token.start_mark
+            end_mark = token.end_mark
+        if not start_mark:
+            assert not end_mark
+        if not end_mark:
+            end_mark = start_mark
+
+        return event_class(*args, start_mark=start_mark, end_mark=end_mark, **kwargs)

@@ -102,3 +102,5 @@ class ScalarToken(Token):
         self.end_mark = end_mark
         self.style = style
 
+class CommentToken(Token):
+  id = '<comment>'

@@ -66,11 +66,12 @@ def scan(stream, Loader=Loader):
     finally:
         loader.dispose()
 
-def parse(stream, Loader=Loader):
+def parse(stream, Loader=Loader, *, keep_comments=False):
     """
     Parse a YAML stream and produce parsing events.
     """
     loader = Loader(stream)
+    loader.keep_comments = keep_comments
     try:
         while loader.check_event():
             yield loader.get_event()
@@ -399,4 +400,3 @@ class YAMLObject(metaclass=YAMLObjectMetaclass):
         """
         return dumper.represent_yaml_object(cls.yaml_tag, data, cls,
                 flow_style=cls.yaml_flow_style)
-

@@ -69,6 +69,7 @@ class Reader(object):
         self.index = 0
         self.line = 0
         self.column = 0
+        self.keep_comments = False
         if isinstance(stream, str):
             self.name = "<unicode string>"
             self.check_printable(stream)

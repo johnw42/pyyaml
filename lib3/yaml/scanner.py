@@ -108,6 +108,9 @@ class Scanner:
         # '[', or '{' tokens.
         self.possible_simple_keys = {}
 
+        # Comments read since the last token.
+        self.pending_comments = None
+
     # Public methods.
 
     def check_token(self, *choices):
@@ -344,7 +347,7 @@ class Scanner:
         while self.indent > column:
             mark = self.get_mark()
             self.indent = self.indents.pop()
-            self.tokens.append(BlockEndToken(mark, mark))
+            self.save_token(BlockEndToken(mark, mark))
 
     def add_indent(self, column):
         # Check if we need to increase indentation.
@@ -364,7 +367,7 @@ class Scanner:
         mark = self.get_mark()
         
         # Add STREAM-START.
-        self.tokens.append(StreamStartToken(mark, mark,
+        self.save_token(StreamStartToken(mark, mark,
             encoding=self.encoding))
         
 
@@ -382,7 +385,7 @@ class Scanner:
         mark = self.get_mark()
         
         # Add STREAM-END.
-        self.tokens.append(StreamEndToken(mark, mark))
+        self.save_token(StreamEndToken(mark, mark))
 
         # The steam is finished.
         self.done = True
@@ -397,7 +400,7 @@ class Scanner:
         self.allow_simple_key = False
 
         # Scan and add DIRECTIVE.
-        self.tokens.append(self.scan_directive())
+        self.save_token(self.scan_directive())
 
     def fetch_document_start(self):
         self.fetch_document_indicator(DocumentStartToken)
@@ -419,7 +422,7 @@ class Scanner:
         start_mark = self.get_mark()
         self.forward(3)
         end_mark = self.get_mark()
-        self.tokens.append(TokenClass(start_mark, end_mark))
+        self.save_token(TokenClass(start_mark, end_mark))
 
     def fetch_flow_sequence_start(self):
         self.fetch_flow_collection_start(FlowSequenceStartToken)
@@ -442,7 +445,7 @@ class Scanner:
         start_mark = self.get_mark()
         self.forward()
         end_mark = self.get_mark()
-        self.tokens.append(TokenClass(start_mark, end_mark))
+        self.save_token(TokenClass(start_mark, end_mark))
 
     def fetch_flow_sequence_end(self):
         self.fetch_flow_collection_end(FlowSequenceEndToken)
@@ -465,7 +468,7 @@ class Scanner:
         start_mark = self.get_mark()
         self.forward()
         end_mark = self.get_mark()
-        self.tokens.append(TokenClass(start_mark, end_mark))
+        self.save_token(TokenClass(start_mark, end_mark))
 
     def fetch_flow_entry(self):
 
@@ -479,7 +482,7 @@ class Scanner:
         start_mark = self.get_mark()
         self.forward()
         end_mark = self.get_mark()
-        self.tokens.append(FlowEntryToken(start_mark, end_mark))
+        self.save_token(FlowEntryToken(start_mark, end_mark))
 
     def fetch_block_entry(self):
 
@@ -495,7 +498,7 @@ class Scanner:
             # We may need to add BLOCK-SEQUENCE-START.
             if self.add_indent(self.column):
                 mark = self.get_mark()
-                self.tokens.append(BlockSequenceStartToken(mark, mark))
+                self.save_token(BlockSequenceStartToken(mark, mark))
 
         # It's an error for the block entry to occur in the flow context,
         # but we let the parser detect this.
@@ -512,7 +515,7 @@ class Scanner:
         start_mark = self.get_mark()
         self.forward()
         end_mark = self.get_mark()
-        self.tokens.append(BlockEntryToken(start_mark, end_mark))
+        self.save_token(BlockEntryToken(start_mark, end_mark))
 
     def fetch_key(self):
         
@@ -528,7 +531,7 @@ class Scanner:
             # We may need to add BLOCK-MAPPING-START.
             if self.add_indent(self.column):
                 mark = self.get_mark()
-                self.tokens.append(BlockMappingStartToken(mark, mark))
+                self.save_token(BlockMappingStartToken(mark, mark))
 
         # Simple keys are allowed after '?' in the block context.
         self.allow_simple_key = not self.flow_level
@@ -540,7 +543,7 @@ class Scanner:
         start_mark = self.get_mark()
         self.forward()
         end_mark = self.get_mark()
-        self.tokens.append(KeyToken(start_mark, end_mark))
+        self.save_token(KeyToken(start_mark, end_mark))
 
     def fetch_value(self):
 
@@ -584,7 +587,7 @@ class Scanner:
             if not self.flow_level:
                 if self.add_indent(self.column):
                     mark = self.get_mark()
-                    self.tokens.append(BlockMappingStartToken(mark, mark))
+                    self.save_token(BlockMappingStartToken(mark, mark))
 
             # Simple keys are allowed after ':' in the block context.
             self.allow_simple_key = not self.flow_level
@@ -596,7 +599,7 @@ class Scanner:
         start_mark = self.get_mark()
         self.forward()
         end_mark = self.get_mark()
-        self.tokens.append(ValueToken(start_mark, end_mark))
+        self.save_token(ValueToken(start_mark, end_mark))
 
     def fetch_alias(self):
 
@@ -607,7 +610,7 @@ class Scanner:
         self.allow_simple_key = False
 
         # Scan and add ALIAS.
-        self.tokens.append(self.scan_anchor(AliasToken))
+        self.save_token(self.scan_anchor(AliasToken))
 
     def fetch_anchor(self):
 
@@ -618,7 +621,7 @@ class Scanner:
         self.allow_simple_key = False
 
         # Scan and add ANCHOR.
-        self.tokens.append(self.scan_anchor(AnchorToken))
+        self.save_token(self.scan_anchor(AnchorToken))
 
     def fetch_tag(self):
 
@@ -629,7 +632,7 @@ class Scanner:
         self.allow_simple_key = False
 
         # Scan and add TAG.
-        self.tokens.append(self.scan_tag())
+        self.save_token(self.scan_tag())
 
     def fetch_literal(self):
         self.fetch_block_scalar(style='|')
@@ -646,7 +649,7 @@ class Scanner:
         self.remove_possible_simple_key()
 
         # Scan and add SCALAR.
-        self.tokens.append(self.scan_block_scalar(style))
+        self.save_token(self.scan_block_scalar(style))
 
     def fetch_single(self):
         self.fetch_flow_scalar(style='\'')
@@ -663,7 +666,7 @@ class Scanner:
         self.allow_simple_key = False
 
         # Scan and add SCALAR.
-        self.tokens.append(self.scan_flow_scalar(style))
+        self.save_token(self.scan_flow_scalar(style))
 
     def fetch_plain(self):
 
@@ -676,7 +679,7 @@ class Scanner:
         self.allow_simple_key = False
 
         # Scan and add SCALAR. May change `allow_simple_key`.
-        self.tokens.append(self.scan_plain())
+        self.save_token(self.scan_plain())
 
     # Checkers.
 
@@ -776,8 +779,13 @@ class Scanner:
             while self.peek() == ' ':
                 self.forward()
             if self.peek() == '#':
+                start_mark = self.get_mark()
                 while self.peek() not in '\0\r\n\x85\u2028\u2029':
                     self.forward()
+                end_mark = self.get_mark()
+                if self.pending_comments is not None:
+                    self.pending_comments.append(
+                        CommentToken(start_mark, end_mark))
             if self.scan_line_break():
                 if not self.flow_level:
                     self.allow_simple_key = True
@@ -1433,3 +1441,6 @@ class Scanner:
             self.forward()
             return ch
         return ''
+
+    def save_token(self, token):
+        self.tokens.append(token)

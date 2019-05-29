@@ -10,6 +10,7 @@ class Mark:
         self.column = column
         self.buffer = buffer
         self.pointer = pointer
+        self.comments = []
 
     def get_snippet(self, indent=4, max_length=75):
         if self.buffer is None:
@@ -72,4 +73,3 @@ class MarkedYAMLError(YAMLError):
         if self.note is not None:
             lines.append(self.note)
         return '\n'.join(lines)
-
